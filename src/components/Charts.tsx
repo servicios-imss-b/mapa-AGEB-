@@ -531,11 +531,8 @@ function MapSection({ cluesGeo = [] }: {
   const [routeSummary, setRouteSummary] = useState<RouteSummary | null>(null);
   const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const unidades = useMemo(
-    () => cluesGeo.filter((unit) =>
-      matchesInstitutionFilter(unit, institucion)
-      && (institucion !== 'CSA' || (unit.aceptado !== null && csaCategories[unit.aceptado]))
-    ),
-    [cluesGeo, csaCategories, institucion],
+    () => cluesGeo.filter((unit) => matchesInstitutionFilter(unit, institucion)),
+    [cluesGeo, institucion],
   );
   const searchResults = useMemo(() => {
     const normalizedQuery = normalizeSearch(query);
@@ -544,14 +541,13 @@ function MapSection({ cluesGeo = [] }: {
     return cluesGeo
       .filter((unit) =>
         matchesInstitutionFilter(unit, institucion)
-        && (institucion !== 'CSA' || (unit.aceptado !== null && csaCategories[unit.aceptado]))
         && (
           normalizeSearch(unit.clues).includes(normalizedQuery)
           || normalizeSearch(unit.nombre_de_la_unidad).includes(normalizedQuery)
         )
       )
       .slice(0, 8);
-  }, [cluesGeo, csaCategories, institucion, query]);
+  }, [cluesGeo, institucion, query]);
   const activeVoronoiUnits = useMemo(
     () => routePoints.length > 0 ? routePoints : selectedUnit ? [selectedUnit] : [],
     [routePoints, selectedUnit],
@@ -605,27 +601,28 @@ function MapSection({ cluesGeo = [] }: {
 
         const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '280px' });
 
-        map.on('mouseenter', 'clues-circles', (e) => {
+        map.on('mouseenter', 'clues-circles', (event) => {
           map.getCanvas().style.cursor = 'pointer';
-          const feat = e.features?.[0];
-          if (!feat) return;
-          const p = feat.properties as Record<string, unknown>;
-          popup.setLngLat(e.lngLat)
+          const feature = event.features?.[0];
+          if (!feature) return;
+          const properties = feature.properties as Record<string, unknown>;
+          popup.setLngLat(event.lngLat)
             .setHTML(buildPopupHTML(
-              String(p['clues']), String(p['institucion']),
-              p['aceptado'] === 'Aceptada' || p['aceptado'] === 'No aceptada' ? p['aceptado'] : null,
-              String(p['nombre']),
-              String(p['entidad']), String(p['municipio']), String(p['localidad']),
-              typeof p['totalConsultorios'] === 'number' ? p['totalConsultorios'] : null,
-              typeof p['poblacionPorConsultorio'] === 'number' ? p['poblacionPorConsultorio'] : null,
-              typeof p['consultaGeneral'] === 'number' ? p['consultaGeneral'] : null,
+              String(properties['clues']), String(properties['institucion']),
+              null,
+              String(properties['nombre']),
+              String(properties['entidad']), String(properties['municipio']), String(properties['localidad']),
+              null, null, null,
             ))
             .addTo(map);
         });
-        map.on('mouseleave', 'clues-circles', () => { map.getCanvas().style.cursor = ''; popup.remove(); });
+        map.on('mouseleave', 'clues-circles', () => {
+          map.getCanvas().style.cursor = '';
+          popup.remove();
+        });
         map.on('click', 'clues-circles', (event) => {
-          const clues = String(event.features?.[0]?.properties?.['clues'] ?? '');
-          const unit = data.find((item) => item.clues === clues);
+          const cveLoc = String(event.features?.[0]?.properties?.['clues'] ?? '');
+          const unit = data.find((item) => item.clues === cveLoc);
           if (!unit) return;
 
           setSelectedUnit(null);
@@ -664,75 +661,8 @@ function MapSection({ cluesGeo = [] }: {
   }, [unidades]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const abortController = new AbortController();
-
-    const updateVoronoi = async () => {
-      const source = map.getSource('selected-voronoi') as maplibregl.GeoJSONSource | undefined;
-      if (!source) return;
-      if (activeVoronoiUnits.length === 0) {
-        source.setData(EMPTY_VORONOI);
-        return;
-      }
-
-      try {
-        if (!voronoiIndexRef.current) {
-          const response = await fetch(`${import.meta.env.BASE_URL}voronoi/index.json`, {
-            signal: abortController.signal,
-          });
-          if (!response.ok) throw new Error('No fue posible cargar el índice Voronoi');
-          voronoiIndexRef.current = await response.json() as Record<string, string>;
-        }
-
-        const fragmentNames = [...new Set(activeVoronoiUnits
-          .map((unit) => voronoiIndexRef.current?.[unit.clues])
-          .filter((name): name is string => Boolean(name)))];
-        const fragments = await Promise.all(fragmentNames.map(async (fragmentName) => {
-          const cachedFragment = voronoiFragmentsRef.current.get(fragmentName);
-          if (cachedFragment) return cachedFragment;
-
-          const response = await fetch(`${import.meta.env.BASE_URL}voronoi/${fragmentName}`, {
-            signal: abortController.signal,
-          });
-          if (!response.ok) throw new Error('No fue posible cargar el fragmento Voronoi');
-          const fragment = await response.json() as VoronoiFeatureCollection;
-          voronoiFragmentsRef.current.set(fragmentName, fragment);
-          return fragment;
-        }));
-        const featuresByClues = new Map(
-          fragments.flatMap((fragment) => fragment.features).map(
-            (feature) => [String(feature.properties.clues ?? ''), feature] as const,
-          ),
-        );
-        const selectedFeatures = activeVoronoiUnits.flatMap((unit) => {
-          const feature = featuresByClues.get(unit.clues);
-          return feature ? [{
-            ...feature,
-            properties: {
-              ...feature.properties,
-              institucion: unit.clave_de_la_institucion,
-              categoria: getMapCategory(unit),
-            },
-          }] : [];
-        });
-        source.setData(selectedFeatures.length > 0 ? {
-          type: 'FeatureCollection',
-          features: selectedFeatures,
-        } : EMPTY_VORONOI);
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        source.setData(EMPTY_VORONOI);
-      }
-    };
-
-    if (map.isStyleLoaded()) void updateVoronoi();
-    else map.once('load', updateVoronoi);
-
-    return () => {
-      abortController.abort();
-      map.off('load', updateVoronoi);
-    };
+    const source = mapRef.current?.getSource('selected-voronoi') as maplibregl.GeoJSONSource | undefined;
+    source?.setData(EMPTY_VORONOI);
   }, [activeVoronoiUnits]);
 
   useEffect(() => {
@@ -881,6 +811,16 @@ function MapSection({ cluesGeo = [] }: {
     setRoutePoints([]);
     setRouteSummary(null);
     setSelectedUnit(unit);
+
+    const map = mapRef.current;
+    if (map) {
+      map.flyTo({
+        center: [unit.lng, unit.lat],
+        zoom: 11,
+        speed: 1.2,
+        essential: true,
+      });
+    }
   };
 
   return (

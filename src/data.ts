@@ -11,17 +11,27 @@ async function fetchJson<T>(filename: string): Promise<T | null> {
   }
 }
 
-async function fetchBaseClues(): Promise<string[]> {
-  const payload = await fetchJson<unknown[]>('base_clues.json');
-  if (!Array.isArray(payload)) return [];
-  return [...new Set(
-    payload.map((row) => {
-      if (typeof row === 'string') return row.trim();
-      if (row && typeof row === 'object' && 'clues_imb' in row)
-        return String((row as { clues_imb: unknown }).clues_imb ?? '').trim();
-      return '';
-    }).filter(Boolean)
-  )];
+function getGeometryCenter(geometry: { type?: string; coordinates?: unknown[] }): [number, number] | null {
+  const positions: [number, number][] = [];
+
+  function collect(value: unknown): void {
+    if (!Array.isArray(value)) return;
+    if (typeof value[0] === 'number' && typeof value[1] === 'number') {
+      positions.push([value[0], value[1]]);
+      return;
+    }
+    value.forEach(collect);
+  }
+
+  if (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon') return null;
+  collect(geometry.coordinates);
+  if (positions.length === 0) return null;
+
+  const [lngTotal, latTotal] = positions.reduce(
+    ([lng, lat], [positionLng, positionLat]) => [lng + positionLng, lat + positionLat],
+    [0, 0],
+  );
+  return [lngTotal / positions.length, latTotal / positions.length];
 }
 
 async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
@@ -36,49 +46,31 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
 
   return payload.features.flatMap((feature) => {
     const properties = feature.properties;
-    const coordinates = feature.geometry?.coordinates;
-    const institucion = properties?.clave_de_la_institucion ?? properties?.institucion;
-    const aceptado = properties?.aceptado;
-    const totalConsultorios = Number(properties?.total_consultorios);
-    const poblacionPorConsultorio = Number(properties?.['población_por_consultorio']);
-    const consultaGeneral = Number(properties?.consulta_general);
+    const center = feature.geometry ? getGeometryCenter(feature.geometry) : null;
+    const cveLoc = String(properties?.cve_loc ?? '').trim();
+    const nomLoc = String(properties?.nom_loc ?? '').trim();
 
     if (
-      feature.geometry?.type !== 'Point'
-      || !Array.isArray(coordinates)
-      || typeof coordinates[0] !== 'number'
-      || typeof coordinates[1] !== 'number'
-      || institucion !== 'CSA'
-      || !properties?.clues
+      !center
+      || !cveLoc
+      || !nomLoc
     ) return [];
 
     return [{
-      clues: String(properties.clues),
-      clave_de_la_institucion: institucion,
-      aceptado: aceptado === 'Aceptada' || aceptado === 'No aceptada' ? aceptado : null,
-      nombre_de_la_unidad: String(properties.nombre_unidad ?? ''),
-      entidad: String(properties.entidad ?? ''),
-      municipio: String(properties.municipio ?? ''),
-      localidad: String(properties.localidad ?? ''),
-      total_consultorios: properties.total_consultorios !== null && Number.isFinite(totalConsultorios)
-        ? totalConsultorios
-        : null,
-      poblacion_por_consultorio: properties['población_por_consultorio'] !== null && Number.isFinite(poblacionPorConsultorio)
-        ? poblacionPorConsultorio
-        : null,
-      consulta_general: properties.consulta_general !== null && Number.isFinite(consultaGeneral)
-        ? consultaGeneral
-        : null,
-      lng: coordinates[0],
-      lat: coordinates[1],
+      clues: cveLoc,
+      clave_de_la_institucion: 'CSA',
+      aceptado: null,
+      nombre_de_la_unidad: nomLoc,
+      entidad: '',
+      municipio: '',
+      localidad: nomLoc,
+      total_consultorios: null,
+      poblacion_por_consultorio: null,
+      consulta_general: null,
+      lng: center[0],
+      lat: center[1],
     }];
   });
-}
-
-async function fetchTablaUnidades(): Promise<Set<string>> {
-  const payload = await fetchJson<unknown[]>('tabla_unidades.json');
-  if (!Array.isArray(payload)) return new Set();
-  return new Set(payload.map((v) => String(v).trim()).filter(Boolean));
 }
 
 async function fetchBaseMeta(): Promise<{ cluesTotal: number; entidadesEsperadas: number; scriptLastRunAt?: string }> {
@@ -117,26 +109,17 @@ async function fetchDataRows(filename: string): Promise<DataRow[]> {
 }
 
 export async function cargarTablasFormulario(): Promise<{ tablas: TablasFormulario; fetchedAt: Date }> {
-  const [baseClues, baseMeta, cluesGeo, resultado, resumen, resumenEntidad, faltantes, baseAn] = await Promise.all([
-    fetchBaseClues(),
-    fetchBaseMeta(),
-    fetchCluesGeo(),
-    fetchDataRows('resultado.json'),
-    fetchDataRows('resumen.json'),
-    fetchDataRows('resumen_entidad.json'),
-    fetchDataRows('faltantes.json'),
-    fetchDataRows('base_an.json'),
-  ]);
+  const [cluesGeo] = await Promise.all([fetchCluesGeo()]);
 
   const tablas: TablasFormulario = {
-    baseClues,
-    baseMeta,
-    baseAn,
-    resultado,
-    resumen,
-    resumenEntidad,
+    baseClues: cluesGeo.map((unit) => unit.clues),
+    baseMeta: { cluesTotal: cluesGeo.length, entidadesEsperadas: 0 },
+    baseAn: [],
+    resultado: [],
+    resumen: [],
+    resumenEntidad: [],
     cluesGeo,
-    faltantes,
+    faltantes: [],
   };
 
   return { tablas, fetchedAt: new Date() };
