@@ -16,7 +16,6 @@ import {
 } from 'recharts';
 import { Layers3, Building2, X, MapPin, Search } from 'lucide-react';
 import maplibregl from 'maplibre-gl';
-import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
 import type { DashboardStats, CluesGeoItem, EntidadChart, InternetPieItem, TopFaltanteChart } from '../types';
 
 interface ChartsProps {
@@ -395,15 +394,20 @@ function buildPopupHTML(
   municipio: string,
   localidad: string,
   consultoriosFaltantes: number | null,
+  poblacionTotal: number | null,
 ) {
   const color = aceptado === 'Aceptada' ? '#A57F2C' : '#6B7280';
   const faltantes = consultoriosFaltantes === null
     ? 'Sin dato'
-    : consultoriosFaltantes.toLocaleString('es-MX', { maximumFractionDigits: 0 });
+    : String(getSemaforoValue(consultoriosFaltantes));
+  const poblacion = poblacionTotal === null
+    ? 'Sin dato'
+    : poblacionTotal.toLocaleString('es-MX', { maximumFractionDigits: 0 });
   const detalle = aceptado
     ? `<div style="margin-top:9px;padding-top:8px;border-top:1px solid #e5e7eb"><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Clasificación</div><div style="font-size:13px;font-weight:700;color:${color}">${aceptado}</div></div>`
     : `<div style="display:grid;grid-template-columns:1fr;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid #e5e7eb">
       <div style="grid-column:1/-1"><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Consultorios faltantes</div><div style="font-size:13px;font-weight:700;color:#374151">${faltantes}</div></div>
+      <div style="grid-column:1/-1"><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Población total 2026</div><div style="font-size:13px;font-weight:700;color:#374151">${poblacion}</div></div>
     </div>`;
   return `<div style="font-family:system-ui;padding:4px 0;min-width:200px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
@@ -444,6 +448,8 @@ function buildCluesFeatureCollection(unidades: CluesGeoItem[]) {
         municipio: unit.municipio,
         localidad: unit.localidad,
         consultoriosFaltantes: unit.consultorios_faltantes,
+        poblacionTotal: unit.poblacion_total_2026,
+        semaforo: getSemaforoKey(unit.consultorios_faltantes),
       },
     })),
   };
@@ -451,15 +457,16 @@ function buildCluesFeatureCollection(unidades: CluesGeoItem[]) {
 
 function getSemaforoValue(consultoriosFaltantes: number | null): number | null {
   if (consultoriosFaltantes === null || !Number.isFinite(consultoriosFaltantes)) return null;
-  return Math.max(0, Math.min(5, Math.floor(consultoriosFaltantes + 0.5)));
+  const rounded = Math.floor(consultoriosFaltantes + 0.5);
+  return Math.max(1, Math.min(5, rounded));
 }
 
-type SemaforoKey = '0-1' | '2-3' | '4-5' | 'NA';
+type SemaforoKey = '1' | '2-3' | '4-5' | 'NA';
 
 function getSemaforoKey(consultoriosFaltantes: number | null): SemaforoKey {
   const value = getSemaforoValue(consultoriosFaltantes);
   if (value === null) return 'NA';
-  if (value <= 1) return '0-1';
+  if (value === 1) return '1';
   if (value <= 3) return '2-3';
   return '4-5';
 }
@@ -484,26 +491,17 @@ function matchesInstitutionFilter(unit: CluesGeoItem, filter: InstitutionFilter)
   return unit.clave_de_la_institucion === filter;
 }
 
-type VoronoiFeatureCollection = FeatureCollection<Polygon | MultiPolygon, Record<string, unknown>>;
-
-const EMPTY_VORONOI: VoronoiFeatureCollection = {
-  type: 'FeatureCollection',
-  features: [],
-};
-
 function MapSection({ cluesGeo = [] }: {
   cluesGeo?: CluesGeoItem[];
 }) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const voronoiIndexRef = useRef<Record<string, string> | null>(null);
-  const voronoiFragmentsRef = useRef(new Map<string, VoronoiFeatureCollection>());
   const institucion: InstitutionFilter = 'CSA';
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<CluesGeoItem | null>(null);
   const [activeSemaforos, setActiveSemaforos] = useState<Record<SemaforoKey, boolean>>({
-    '0-1': true,
+    '1': true,
     '2-3': true,
     '4-5': true,
     NA: true,
@@ -550,26 +548,13 @@ function MapSection({ cluesGeo = [] }: {
           data: buildAgebFeatureCollection(data),
         });
         map.addLayer({ id: 'ageb-polygons-fill', type: 'fill', source: 'ageb-polygons', paint: {
-          'fill-color': ['match', ['get', 'semaforo'], '0-1', '#0D5D2A', '2-3', '#F1D54A', '4-5', '#FFA000', 'NA', '#D41111', '#D41111'],
+          'fill-color': ['match', ['get', 'semaforo'], '1', '#0D5D2A', '2-3', '#F1D54A', '4-5', '#FFA000', 'NA', '#A57F2C', '#A57F2C'],
           'fill-opacity': 0.42,
           'fill-antialias': true,
         }});
         map.addLayer({ id: 'ageb-polygons-outline', type: 'line', source: 'ageb-polygons', paint: {
-          'line-color': ['match', ['get', 'semaforo'], '0-1', '#0D5D2A', '2-3', '#F1D54A', '4-5', '#FFA000', 'NA', '#D41111', '#D41111'],
+          'line-color': ['match', ['get', 'semaforo'], '1', '#0D5D2A', '2-3', '#F1D54A', '4-5', '#FFA000', 'NA', '#A57F2C', '#A57F2C'],
           'line-width': 1.5,
-          'line-opacity': 0.9,
-        }});
-        map.addSource('selected-voronoi', {
-          type: 'geojson',
-          data: EMPTY_VORONOI,
-        });
-        map.addLayer({ id: 'selected-voronoi-fill', type: 'fill', source: 'selected-voronoi', paint: {
-          'fill-color': ['match', ['get', 'categoria'], 'CSA_ACEPTADA', '#A57F2C', 'CSA_NO_ACEPTADA', '#6B7280', '#002F2A'],
-          'fill-opacity': 0.2,
-        }});
-        map.addLayer({ id: 'selected-voronoi-outline', type: 'line', source: 'selected-voronoi', paint: {
-          'line-color': ['match', ['get', 'categoria'], 'CSA_ACEPTADA', '#A57F2C', 'CSA_NO_ACEPTADA', '#6B7280', '#002F2A'],
-          'line-width': 2.5,
           'line-opacity': 0.9,
         }});
         map.addSource('clues', {
@@ -579,12 +564,12 @@ function MapSection({ cluesGeo = [] }: {
 
         map.addLayer({ id: 'clues-halo', type: 'circle', source: 'clues', paint: {
           'circle-radius': 9,
-          'circle-color': ['match', ['get', 'categoria'], 'CSA_ACEPTADA', '#D5B05B', 'CSA_NO_ACEPTADA', '#9CA3AF', '#1A6B5E'],
+          'circle-color': ['match', ['get', 'semaforo'], '1', '#0D5D2A', '2-3', '#F1D54A', '4-5', '#FFA000', 'NA', '#A57F2C', '#A57F2C'],
           'circle-opacity': 0.18, 'circle-stroke-width': 0,
         }});
         map.addLayer({ id: 'clues-circles', type: 'circle', source: 'clues', paint: {
           'circle-radius': 5,
-          'circle-color': ['match', ['get', 'categoria'], 'CSA_ACEPTADA', '#A57F2C', 'CSA_NO_ACEPTADA', '#6B7280', '#002F2A'],
+          'circle-color': ['match', ['get', 'semaforo'], '1', '#0D5D2A', '2-3', '#F1D54A', '4-5', '#FFA000', 'NA', '#A57F2C', '#A57F2C'],
           'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-opacity': 0.95,
         }});
 
@@ -602,6 +587,7 @@ function MapSection({ cluesGeo = [] }: {
               String(properties['nombre']),
               String(properties['entidad']), String(properties['municipio']), String(properties['localidad']),
               Number(properties['consultoriosFaltantes']) || null,
+              Number(properties['poblacionTotal']) || null,
             ))
             .addTo(map);
         });
@@ -648,11 +634,22 @@ function MapSection({ cluesGeo = [] }: {
   }, [cluesGeo, institucion]);
 
   useEffect(() => {
-    const source = mapRef.current?.getSource('clues') as maplibregl.GeoJSONSource | undefined;
-    if (!source) return;
-    source.setData(buildCluesFeatureCollection(unidades));
-    const polygonSource = mapRef.current?.getSource('ageb-polygons') as maplibregl.GeoJSONSource | undefined;
-    polygonSource?.setData(buildAgebFeatureCollection(unidades));
+    const map = mapRef.current;
+    if (!map) return;
+
+    const updateFilteredSources = () => {
+      const pointSource = map.getSource('clues') as maplibregl.GeoJSONSource | undefined;
+      const polygonSource = map.getSource('ageb-polygons') as maplibregl.GeoJSONSource | undefined;
+      pointSource?.setData(buildCluesFeatureCollection(unidades));
+      polygonSource?.setData(buildAgebFeatureCollection(unidades));
+    };
+
+    if (map.isStyleLoaded()) updateFilteredSources();
+    else map.once('load', updateFilteredSources);
+
+    return () => {
+      map.off('load', updateFilteredSources);
+    };
   }, [unidades]);
 
   useEffect(() => {
@@ -674,6 +671,7 @@ function MapSection({ cluesGeo = [] }: {
           selectedUnit.municipio,
           selectedUnit.localidad,
           selectedUnit.consultorios_faltantes,
+          selectedUnit.poblacion_total_2026,
         ))
         .addTo(map);
     };
@@ -695,8 +693,6 @@ function MapSection({ cluesGeo = [] }: {
       });
       setSelectedUnit(null);
     };
-
-  const totalInstituciones = new Set(unidades.map((unit) => unit.clave_de_la_institucion)).size;
 
   const handleSelectUnit = (unit: CluesGeoItem) => {
     setQuery(`${unit.clues} - ${unit.nombre_de_la_unidad}`);
@@ -775,10 +771,6 @@ function MapSection({ cluesGeo = [] }: {
               <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-500">Total unidades</p>
               <p className="text-lg font-black text-emerald-700">{total.toLocaleString('es-MX')}</p>
             </div>
-            <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-right">
-              <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500">Categorías</p>
-              <p className="text-lg font-black text-amber-700">{totalInstituciones.toLocaleString('es-MX')}</p>
-            </div>
           </div>
         </div>
 
@@ -791,10 +783,10 @@ function MapSection({ cluesGeo = [] }: {
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-gray-100 bg-gray-50 px-4 py-2.5 text-xs text-gray-500 sm:px-6">
           <span className="font-semibold text-gray-600">Consultorios faltantes:</span>
           {([
-            ['0-1', '0–1', '#0D5D2A'],
+            ['1', '1', '#0D5D2A'],
             ['2-3', '2–3', '#F1D54A'],
             ['4-5', '4–5', '#FFA000'],
-            ['NA', 'Se requieren consultorios', '#D41111'],
+            ['NA', 'Zonas con alta presión demográfica', '#A57F2C'],
           ] as const).map(([key, label, color]) => (
             <button
               key={key}

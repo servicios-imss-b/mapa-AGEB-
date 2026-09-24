@@ -55,6 +55,7 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
       || String(rawConsultoriosFaltantes).trim() === ''
       ? null
       : Number(rawConsultoriosFaltantes);
+    const poblacionTotal = Number(properties?.poblacion_total_2026);
 
     if (
       !center
@@ -79,6 +80,7 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
         && consultoriosFaltantes > 0
         ? consultoriosFaltantes
         : null,
+      poblacion_total_2026: Number.isFinite(poblacionTotal) ? poblacionTotal : null,
       geometry: feature.geometry as CluesGeoItem['geometry'],
       lng: center[0],
       lat: center[1],

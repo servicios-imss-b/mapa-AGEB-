@@ -14,6 +14,7 @@ export interface CluesGeoItem {
   poblacion_por_consultorio: number | null;
   consulta_general: number | null;
   consultorios_faltantes: number | null;
+  poblacion_total_2026: number | null;
   geometry: Geometry;
   lat: number;
   lng: number;
