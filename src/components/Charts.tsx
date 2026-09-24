@@ -47,9 +47,7 @@ function formatTooltipNumber(value: unknown): string {
 
 type StatKey =
   | 'total'
-  | 'IMB'
-  | 'IMO'
-  | 'CSA';
+  | 'AGEB';
 
 interface StatCardDef {
   icon: typeof Layers3;
@@ -75,28 +73,8 @@ const STAT_CARDS: StatCardDef[] = [
   },
   {
     icon: Building2,
-    label: 'IMSS BIENESTAR (IMB)',
-    key: 'IMB',
-    bg: 'bg-rose-50',
-    iconBg: 'bg-rose-100',
-    iconColor: 'text-[#611232]',
-    valueColor: 'text-[#611232]',
-    border: 'border-rose-200',
-  },
-  {
-    icon: MapPin,
-    label: 'IMSS ORDINARIO (IMO)',
-    key: 'IMO',
-    bg: 'bg-amber-50',
-    iconBg: 'bg-amber-100',
-    iconColor: 'text-[#002F2A]',
-    valueColor: 'text-[#002F2A]',
-    border: 'border-amber-200',
-  },
-  {
-    icon: Building2,
-    label: 'CASAS DE SALUD (CSA)',
-    key: 'CSA',
+    label: 'AGEB',
+    key: 'AGEB',
     bg: 'bg-[#FBF7ED]',
     iconBg: 'bg-[#EFE4C8]',
     iconColor: 'text-[#A57F2C]',
@@ -431,11 +409,7 @@ function buildPopupHTML(
   poblacionPorConsultorio: number | null,
   consultaGeneral: number | null,
 ) {
-  const color = institucion === 'IMB'
-    ? '#611232'
-    : institucion === 'CSA'
-      ? aceptado === 'Aceptada' ? '#A57F2C' : '#6B7280'
-      : '#002F2A';
+  const color = aceptado === 'Aceptada' ? '#A57F2C' : '#6B7280';
   const consultorios = totalConsultorios === null
     ? 'Sin dato'
     : totalConsultorios.toLocaleString('es-MX', { maximumFractionDigits: 0 });
@@ -455,7 +429,7 @@ function buildPopupHTML(
   return `<div style="font-family:system-ui;padding:4px 0;min-width:200px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
       <div style="font-size:11px;font-weight:700;color:#065f46">${clues}</div>
-      <div style="font-size:10px;font-weight:800;color:${color}">${institucion}</div>
+      <div style="font-size:10px;font-weight:800;color:${color}">${institucion === 'CSA' ? 'AGEB' : institucion}</div>
     </div>
     <div style="font-size:12px;font-weight:600;color:#111827;margin-bottom:2px;line-height:1.3">${nombre}</div>
     <div style="font-size:11px;color:#6b7280">${entidad}</div>
@@ -468,16 +442,38 @@ function normalizeSearch(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
-type InstitutionFilter = 'IMO' | 'IMB' | 'CSA' | 'TODAS';
-type MapCategory = 'IMO' | 'IMB' | 'CSA_ACEPTADA' | 'CSA_NO_ACEPTADA';
+type InstitutionFilter = 'CSA';
+type MapCategory = 'CSA_ACEPTADA' | 'CSA_NO_ACEPTADA';
 
 function getMapCategory(unit: CluesGeoItem): MapCategory {
-  if (unit.clave_de_la_institucion !== 'CSA') return unit.clave_de_la_institucion;
   return unit.aceptado === 'Aceptada' ? 'CSA_ACEPTADA' : 'CSA_NO_ACEPTADA';
 }
 
+function buildCluesFeatureCollection(unidades: CluesGeoItem[]) {
+  return {
+    type: 'FeatureCollection' as const,
+    features: unidades.map((unit) => ({
+      type: 'Feature' as const,
+      geometry: { type: 'Point' as const, coordinates: [unit.lng, unit.lat] as [number, number] },
+      properties: {
+        clues: unit.clues,
+        institucion: unit.clave_de_la_institucion,
+        aceptado: unit.aceptado,
+        categoria: getMapCategory(unit),
+        nombre: unit.nombre_de_la_unidad,
+        entidad: unit.entidad,
+        municipio: unit.municipio,
+        localidad: unit.localidad,
+        totalConsultorios: unit.total_consultorios,
+        poblacionPorConsultorio: unit.poblacion_por_consultorio,
+        consultaGeneral: unit.consulta_general,
+      },
+    })),
+  };
+}
+
 function matchesInstitutionFilter(unit: CluesGeoItem, filter: InstitutionFilter): boolean {
-  return filter === 'TODAS' || unit.clave_de_la_institucion === filter;
+  return unit.clave_de_la_institucion === filter;
 }
 
 interface RouteSummary {
@@ -523,7 +519,7 @@ function MapSection({ cluesGeo = [] }: {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const voronoiIndexRef = useRef<Record<string, string> | null>(null);
   const voronoiFragmentsRef = useRef(new Map<string, VoronoiFeatureCollection>());
-  const [institucion, setInstitucion] = useState<InstitutionFilter>('TODAS');
+  const institucion: InstitutionFilter = 'CSA';
   const [csaCategories, setCsaCategories] = useState({
     Aceptada: true,
     'No aceptada': true,
@@ -583,46 +579,27 @@ function MapSection({ cluesGeo = [] }: {
           data: EMPTY_VORONOI,
         });
         map.addLayer({ id: 'selected-voronoi-fill', type: 'fill', source: 'selected-voronoi', paint: {
-          'fill-color': ['match', ['get', 'categoria'], 'IMB', '#611232', 'CSA_ACEPTADA', '#A57F2C', 'CSA_NO_ACEPTADA', '#6B7280', '#002F2A'],
+          'fill-color': ['match', ['get', 'categoria'], 'CSA_ACEPTADA', '#A57F2C', 'CSA_NO_ACEPTADA', '#6B7280', '#002F2A'],
           'fill-opacity': 0.2,
         }});
         map.addLayer({ id: 'selected-voronoi-outline', type: 'line', source: 'selected-voronoi', paint: {
-          'line-color': ['match', ['get', 'categoria'], 'IMB', '#611232', 'CSA_ACEPTADA', '#A57F2C', 'CSA_NO_ACEPTADA', '#6B7280', '#002F2A'],
+          'line-color': ['match', ['get', 'categoria'], 'CSA_ACEPTADA', '#A57F2C', 'CSA_NO_ACEPTADA', '#6B7280', '#002F2A'],
           'line-width': 2.5,
           'line-opacity': 0.9,
         }});
         map.addSource('clues', {
           type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: data.map((u) => ({
-              type: 'Feature',
-              geometry: { type: 'Point', coordinates: [u.lng, u.lat] },
-              properties: {
-                clues: u.clues,
-                institucion: u.clave_de_la_institucion,
-                aceptado: u.aceptado,
-                categoria: getMapCategory(u),
-                nombre: u.nombre_de_la_unidad,
-                entidad: u.entidad,
-                municipio: u.municipio,
-                localidad: u.localidad,
-                totalConsultorios: u.total_consultorios,
-                poblacionPorConsultorio: u.poblacion_por_consultorio,
-                consultaGeneral: u.consulta_general,
-              },
-            })),
-          },
+          data: buildCluesFeatureCollection(data),
         });
 
         map.addLayer({ id: 'clues-halo', type: 'circle', source: 'clues', paint: {
           'circle-radius': 9,
-          'circle-color': ['match', ['get', 'categoria'], 'IMB', '#9F536F', 'CSA_ACEPTADA', '#D5B05B', 'CSA_NO_ACEPTADA', '#9CA3AF', '#1A6B5E'],
+          'circle-color': ['match', ['get', 'categoria'], 'CSA_ACEPTADA', '#D5B05B', 'CSA_NO_ACEPTADA', '#9CA3AF', '#1A6B5E'],
           'circle-opacity': 0.18, 'circle-stroke-width': 0,
         }});
         map.addLayer({ id: 'clues-circles', type: 'circle', source: 'clues', paint: {
           'circle-radius': 5,
-          'circle-color': ['match', ['get', 'categoria'], 'IMB', '#611232', 'CSA_ACEPTADA', '#A57F2C', 'CSA_NO_ACEPTADA', '#6B7280', '#002F2A'],
+          'circle-color': ['match', ['get', 'categoria'], 'CSA_ACEPTADA', '#A57F2C', 'CSA_NO_ACEPTADA', '#6B7280', '#002F2A'],
           'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-opacity': 0.95,
         }});
 
@@ -678,7 +655,13 @@ function MapSection({ cluesGeo = [] }: {
       mapRef.current = null;
       map.remove();
     };
-  }, [unidades, institucion]);
+  }, [cluesGeo, institucion]);
+
+  useEffect(() => {
+    const source = mapRef.current?.getSource('clues') as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    source.setData(buildCluesFeatureCollection(unidades));
+  }, [unidades]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -913,9 +896,7 @@ function MapSection({ cluesGeo = [] }: {
               setSearchOpen(true);
             }}
             onFocus={() => setSearchOpen(true)}
-            placeholder={institucion === 'TODAS'
-              ? 'Buscar por identificador o nombre'
-              : `Buscar por identificador o nombre en ${institucion.replace(/_/g, ' ')}`}
+            placeholder="Buscar por identificador o nombre en AGEB"
             aria-label="Buscar por CLUES o nombre"
             className="w-full border-0 bg-transparent text-sm text-gray-800 outline-none placeholder:text-gray-400"
           />
@@ -930,20 +911,12 @@ function MapSection({ cluesGeo = [] }: {
                 onClick={() => handleSelectUnit(unit)}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-gray-50"
               >
-                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                  unit.clave_de_la_institucion === 'IMB'
-                    ? 'bg-[#611232]'
-                    : getMapCategory(unit) === 'CSA_ACEPTADA'
-                      ? 'bg-[#A57F2C]'
-                      : getMapCategory(unit) === 'CSA_NO_ACEPTADA'
-                        ? 'bg-gray-500'
-                        : 'bg-[#002F2A]'
-                }`} />
+                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${getMapCategory(unit) === 'CSA_ACEPTADA' ? 'bg-[#A57F2C]' : 'bg-gray-500'}`} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold text-gray-800">{unit.nombre_de_la_unidad}</span>
                   <span className="block truncate text-xs text-gray-500">{unit.clues} · {unit.entidad}</span>
                 </span>
-                <span className="text-[10px] font-bold text-gray-400">{unit.clave_de_la_institucion}</span>
+                <span className="text-[10px] font-bold text-gray-400">AGEB</span>
               </button>
             )) : (
               <p className="px-3 py-4 text-center text-sm text-gray-500">No se encontraron unidades</p>
@@ -966,38 +939,13 @@ function MapSection({ cluesGeo = [] }: {
             </div>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:mr-3 sm:w-auto sm:gap-3">
-            <div className="flex max-w-full flex-wrap rounded-xl border border-gray-200 bg-gray-100 p-1">
-              {(['IMO', 'IMB', 'CSA', 'TODAS'] as const).map((option) => (
-                <button
-                  key={option}
-                  onClick={() => {
-                    setInstitucion(option);
-                    setSelectedUnit(null);
-                    setRoutePoints([]);
-                    setRouteSummary(null);
-                  }}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
-                    institucion === option
-                      ? option === 'IMB'
-                        ? 'bg-[#611232] text-white'
-                        : option === 'IMO'
-                          ? 'bg-[#002F2A] text-white'
-                          : option === 'CSA'
-                            ? 'bg-[#A57F2C] text-white'
-                            : 'bg-gray-700 text-white'
-                      : 'text-gray-500 hover:text-gray-800'
-                  }`}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
+            <div className="rounded-xl bg-[#FBF7ED] px-3 py-2 text-xs font-bold text-[#A57F2C]">AGEB</div>
             <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2 text-right">
               <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-500">Total unidades</p>
               <p className="text-lg font-black text-emerald-700">{total.toLocaleString('es-MX')}</p>
             </div>
             <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-right">
-              <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500">Instituciones</p>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500">Categorías</p>
               <p className="text-lg font-black text-amber-700">{totalInstituciones.toLocaleString('es-MX')}</p>
             </div>
           </div>
@@ -1045,32 +993,8 @@ function MapSection({ cluesGeo = [] }: {
 
         {/* Footer */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-gray-100 bg-gray-50 px-4 py-2.5 text-xs text-gray-500 sm:px-6">
-          <span className="font-semibold text-gray-600">Institución:</span>
-          {(institucion === 'IMO' || institucion === 'TODAS') && (
-            <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-[#002F2A]" />
-              IMO
-            </span>
-          )}
-          {(institucion === 'IMB' || institucion === 'TODAS') && (
-            <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-[#611232]" />
-              IMB
-            </span>
-          )}
-          {institucion === 'TODAS' && (
-            <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-[#A57F2C]" />
-              CSA aceptada
-            </span>
-          )}
-          {institucion === 'TODAS' && (
-            <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-gray-500" />
-              CSA no aceptada
-            </span>
-          )}
-          {institucion === 'CSA' && (
+          <span className="font-semibold text-gray-600">AGEB:</span>
+          {(
             <button
               type="button"
               onClick={() => toggleCsaCategory('Aceptada')}
@@ -1078,10 +1002,10 @@ function MapSection({ cluesGeo = [] }: {
               className={`flex items-center gap-1.5 font-semibold transition-opacity ${csaCategories.Aceptada ? 'text-gray-700' : 'text-gray-400 opacity-50'}`}
             >
               <span className={`h-3 w-3 rounded-full border-2 border-[#A57F2C] ${csaCategories.Aceptada ? 'bg-[#A57F2C]' : 'bg-white'}`} />
-              CSA aceptada
+              Aceptada
             </button>
           )}
-          {institucion === 'CSA' && (
+          {(
             <button
               type="button"
               onClick={() => toggleCsaCategory('No aceptada')}
@@ -1089,7 +1013,7 @@ function MapSection({ cluesGeo = [] }: {
               className={`flex items-center gap-1.5 font-semibold transition-opacity ${csaCategories['No aceptada'] ? 'text-gray-700' : 'text-gray-400 opacity-50'}`}
             >
               <span className={`h-3 w-3 rounded-full border-2 border-gray-500 ${csaCategories['No aceptada'] ? 'bg-gray-500' : 'bg-white'}`} />
-              CSA no aceptada
+              No aceptada
             </button>
           )}
           <span className="ml-auto text-gray-400">Pasa el cursor sobre un punto para ver detalles</span>
@@ -1103,9 +1027,7 @@ export function StatCards({
 }: ChartsProps) {
   const values: Record<StatKey, { value: number; helper: string }> = {
     total: { value: cluesGeo.length, helper: 'Unidades de primer nivel' },
-    IMB: { value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'IMB').length, helper: 'IMSS Bienestar' },
-    IMO: { value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'IMO').length, helper: 'IMSS Ordinario' },
-    CSA: {
+    AGEB: {
       value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'CSA').length,
       helper: `${cluesGeo.filter((unit) => unit.aceptado === 'Aceptada').length.toLocaleString('es-MX')} aceptadas · ${cluesGeo.filter((unit) => unit.aceptado === 'No aceptada').length.toLocaleString('es-MX')} no aceptadas`,
     },

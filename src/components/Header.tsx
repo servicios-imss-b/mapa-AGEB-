@@ -28,10 +28,10 @@ export function Header({ onLogoClick }: { onLogoClick?: () => void }) {
       <div className="border-b border-gray-200 bg-white">
         <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
           <h1 className="max-w-3xl text-3xl font-black leading-tight tracking-tight text-imss-green sm:text-4xl lg:text-5xl">
-            Mapa de Primer Nivel IMO, IMB y CSA
+            Mapa de AGEB
           </h1>
           <p className="mt-2 max-w-xl text-base text-gray-500">
-            Consulta y localiza unidades de primer nivel por CLUES, nombre e institución.
+            Consulta y localiza unidades por CLUES, clave de una AGEB o de una localidad, nombre e institución.
           </p>
         </div>
       </div>

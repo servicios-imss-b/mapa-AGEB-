@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { StatCards } from './components/Charts';
 import { cargarTablasFormulario } from './data';
 import type { DashboardStats, DataRow, EntidadChart, InternetPieItem, TopFaltanteChart, CluesGeoItem } from './types';
+import gifUrl from '../gif/cat-explosion.gif';
 
 function toText(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -122,6 +123,29 @@ export default function App() {
   const [cluesGeo, setCluesGeo] = useState<CluesGeoItem[]>([]);
   const [faltantes, setFaltantes] = useState<DataRow[]>([]);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [logoClicks, setLogoClicks] = useState(0);
+  const [showGif, setShowGif] = useState(false);
+  const [gifKey, setGifKey] = useState(0);
+  const [gifLoaded, setGifLoaded] = useState(false);
+
+  function handleLogoClick() {
+    setLogoClicks((current) => {
+      const next = current + 1;
+      if (next === 10) {
+        setGifKey((key) => key + 1);
+        setGifLoaded(false);
+        setShowGif(true);
+        return 0;
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    if (!showGif || !gifLoaded) return;
+    const timeout = window.setTimeout(() => setShowGif(false), 5510);
+    return () => window.clearTimeout(timeout);
+  }, [showGif, gifLoaded]);
 
   async function load() {
     try {
@@ -293,7 +317,19 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header />
+      <Header onLogoClick={handleLogoClick} />
+
+      {showGif && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-6">
+          <img
+            key={gifKey}
+            src={`${gifUrl}?play=${gifKey}`}
+            alt=""
+            onLoad={() => setGifLoaded(true)}
+            className="max-h-[80vh] max-w-[min(90vw,48rem)] object-contain"
+          />
+        </div>
+      )}
 
       <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6 lg:px-8">
         {loading ? (

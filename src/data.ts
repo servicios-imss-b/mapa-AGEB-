@@ -48,7 +48,7 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
       || !Array.isArray(coordinates)
       || typeof coordinates[0] !== 'number'
       || typeof coordinates[1] !== 'number'
-      || (institucion !== 'IMO' && institucion !== 'IMB' && institucion !== 'CSA')
+      || institucion !== 'CSA'
       || !properties?.clues
     ) return [];
 
