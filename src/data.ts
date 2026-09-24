@@ -49,7 +49,12 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
     const center = feature.geometry ? getGeometryCenter(feature.geometry) : null;
     const cveLoc = String(properties?.cve_loc ?? '').trim();
     const nomLoc = String(properties?.nom_loc ?? '').trim();
-    const consultoriosFaltantes = Number(properties?.consultorios_faltantes);
+    const rawConsultoriosFaltantes = properties?.consultorios_faltantes;
+    const consultoriosFaltantes = rawConsultoriosFaltantes === null
+      || rawConsultoriosFaltantes === undefined
+      || String(rawConsultoriosFaltantes).trim() === ''
+      ? null
+      : Number(rawConsultoriosFaltantes);
 
     if (
       !center
@@ -69,7 +74,11 @@ async function fetchCluesGeo(): Promise<CluesGeoItem[]> {
       total_consultorios: null,
       poblacion_por_consultorio: null,
       consulta_general: null,
-      consultorios_faltantes: Number.isFinite(consultoriosFaltantes) ? consultoriosFaltantes : null,
+      consultorios_faltantes: consultoriosFaltantes !== null
+        && Number.isFinite(consultoriosFaltantes)
+        && consultoriosFaltantes > 0
+        ? consultoriosFaltantes
+        : null,
       geometry: feature.geometry as CluesGeoItem['geometry'],
       lng: center[0],
       lat: center[1],

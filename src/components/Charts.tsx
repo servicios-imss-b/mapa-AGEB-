@@ -449,6 +449,21 @@ function buildCluesFeatureCollection(unidades: CluesGeoItem[]) {
   };
 }
 
+function getSemaforoValue(consultoriosFaltantes: number | null): number | null {
+  if (consultoriosFaltantes === null || !Number.isFinite(consultoriosFaltantes)) return null;
+  return Math.max(0, Math.min(5, Math.floor(consultoriosFaltantes + 0.5)));
+}
+
+type SemaforoKey = '0-1' | '2-3' | '4-5' | 'NA';
+
+function getSemaforoKey(consultoriosFaltantes: number | null): SemaforoKey {
+  const value = getSemaforoValue(consultoriosFaltantes);
+  if (value === null) return 'NA';
+  if (value <= 1) return '0-1';
+  if (value <= 3) return '2-3';
+  return '4-5';
+}
+
 function buildAgebFeatureCollection(unidades: CluesGeoItem[]) {
   return {
     type: 'FeatureCollection' as const,
@@ -459,6 +474,7 @@ function buildAgebFeatureCollection(unidades: CluesGeoItem[]) {
         clues: unit.clues,
         nombre: unit.nombre_de_la_unidad,
         categoria: getMapCategory(unit),
+        semaforo: getSemaforoKey(unit.consultorios_faltantes),
       },
     })),
   };
@@ -486,9 +502,15 @@ function MapSection({ cluesGeo = [] }: {
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<CluesGeoItem | null>(null);
+  const [activeSemaforos, setActiveSemaforos] = useState<Record<SemaforoKey, boolean>>({
+    '0-1': true,
+    '2-3': true,
+    '4-5': true,
+    NA: true,
+  });
   const unidades = useMemo(
-    () => cluesGeo.filter((unit) => matchesInstitutionFilter(unit, institucion)),
-    [cluesGeo, institucion],
+    () => cluesGeo.filter((unit) => matchesInstitutionFilter(unit, institucion) && activeSemaforos[getSemaforoKey(unit.consultorios_faltantes)]),
+    [activeSemaforos, cluesGeo, institucion],
   );
   const searchResults = useMemo(() => {
     const normalizedQuery = normalizeSearch(query);
@@ -497,13 +519,14 @@ function MapSection({ cluesGeo = [] }: {
     return cluesGeo
       .filter((unit) =>
         matchesInstitutionFilter(unit, institucion)
+        && activeSemaforos[getSemaforoKey(unit.consultorios_faltantes)]
         && (
           normalizeSearch(unit.clues).includes(normalizedQuery)
           || normalizeSearch(unit.nombre_de_la_unidad).includes(normalizedQuery)
         )
       )
       .slice(0, 8);
-  }, [cluesGeo, institucion, query]);
+  }, [activeSemaforos, cluesGeo, institucion, query]);
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -527,13 +550,14 @@ function MapSection({ cluesGeo = [] }: {
           data: buildAgebFeatureCollection(data),
         });
         map.addLayer({ id: 'ageb-polygons-fill', type: 'fill', source: 'ageb-polygons', paint: {
-          'fill-color': '#2F8F83',
-          'fill-opacity': 0.16,
+          'fill-color': ['match', ['get', 'semaforo'], '0-1', '#0D5D2A', '2-3', '#F1D54A', '4-5', '#FFA000', 'NA', '#D41111', '#D41111'],
+          'fill-opacity': 0.42,
+          'fill-antialias': true,
         }});
         map.addLayer({ id: 'ageb-polygons-outline', type: 'line', source: 'ageb-polygons', paint: {
-          'line-color': '#1A6B5E',
-          'line-width': 1,
-          'line-opacity': 0.65,
+          'line-color': ['match', ['get', 'semaforo'], '0-1', '#0D5D2A', '2-3', '#F1D54A', '4-5', '#FFA000', 'NA', '#D41111', '#D41111'],
+          'line-width': 1.5,
+          'line-opacity': 0.9,
         }});
         map.addSource('selected-voronoi', {
           type: 'geojson',
@@ -664,6 +688,14 @@ function MapSection({ cluesGeo = [] }: {
   }, [institucion, selectedUnit]);
 
   const total = unidades.length;
+    const toggleSemaforo = (key: SemaforoKey) => {
+      setActiveSemaforos((current) => {
+        if (current[key] && Object.values(current).filter(Boolean).length === 1) return current;
+        return { ...current, [key]: !current[key] };
+      });
+      setSelectedUnit(null);
+    };
+
   const totalInstituciones = new Set(unidades.map((unit) => unit.clave_de_la_institucion)).size;
 
   const handleSelectUnit = (unit: CluesGeoItem) => {
@@ -757,6 +789,24 @@ function MapSection({ cluesGeo = [] }: {
 
         {/* Footer */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-gray-100 bg-gray-50 px-4 py-2.5 text-xs text-gray-500 sm:px-6">
+          <span className="font-semibold text-gray-600">Consultorios faltantes:</span>
+          {([
+            ['0-1', '0–1', '#0D5D2A'],
+            ['2-3', '2–3', '#F1D54A'],
+            ['4-5', '4–5', '#FFA000'],
+            ['NA', 'Se requieren consultorios', '#D41111'],
+          ] as const).map(([key, label, color]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => toggleSemaforo(key)}
+              aria-pressed={activeSemaforos[key]}
+              className={`flex items-center gap-1.5 font-semibold transition-opacity ${activeSemaforos[key] ? 'text-gray-700' : 'text-gray-400 opacity-50'}`}
+            >
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+              {label}
+            </button>
+          ))}
           <span className="ml-auto text-gray-400">Pasa el cursor sobre un punto para ver detalles</span>
         </div>
       </section>
