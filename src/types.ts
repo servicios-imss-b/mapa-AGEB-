@@ -1,5 +1,6 @@
 export type CellValue = string | number | boolean | null;
 export type DataRow = Record<string, CellValue>;
+import type { Geometry } from 'geojson';
 
 export interface CluesGeoItem {
   clues: string;
@@ -12,6 +13,8 @@ export interface CluesGeoItem {
   total_consultorios: number | null;
   poblacion_por_consultorio: number | null;
   consulta_general: number | null;
+  consultorios_faltantes: number | null;
+  geometry: Geometry;
   lat: number;
   lng: number;
 }

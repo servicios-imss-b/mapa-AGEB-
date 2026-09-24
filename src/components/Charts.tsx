@@ -14,7 +14,7 @@ import {
   ComposedChart,
   Line,
 } from 'recharts';
-import { Layers3, Building2, X, MapPin, Search, Route, Trash2 } from 'lucide-react';
+import { Layers3, Building2, X, MapPin, Search } from 'lucide-react';
 import maplibregl from 'maplibre-gl';
 import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
 import type { DashboardStats, CluesGeoItem, EntidadChart, InternetPieItem, TopFaltanteChart } from '../types';
@@ -394,26 +394,16 @@ function buildPopupHTML(
   entidad: string,
   municipio: string,
   localidad: string,
-  totalConsultorios: number | null,
-  poblacionPorConsultorio: number | null,
-  consultaGeneral: number | null,
+  consultoriosFaltantes: number | null,
 ) {
   const color = aceptado === 'Aceptada' ? '#A57F2C' : '#6B7280';
-  const consultorios = totalConsultorios === null
+  const faltantes = consultoriosFaltantes === null
     ? 'Sin dato'
-    : totalConsultorios.toLocaleString('es-MX', { maximumFractionDigits: 0 });
-  const poblacion = poblacionPorConsultorio === null
-    ? 'Sin dato'
-    : poblacionPorConsultorio.toLocaleString('es-MX', { maximumFractionDigits: 0 });
-  const consultas = consultaGeneral === null
-    ? 'Sin dato'
-    : consultaGeneral.toLocaleString('es-MX', { maximumFractionDigits: 0 });
+    : consultoriosFaltantes.toLocaleString('es-MX', { maximumFractionDigits: 0 });
   const detalle = aceptado
     ? `<div style="margin-top:9px;padding-top:8px;border-top:1px solid #e5e7eb"><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Clasificación</div><div style="font-size:13px;font-weight:700;color:${color}">${aceptado}</div></div>`
-    : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid #e5e7eb">
-      <div><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Consultorios</div><div style="font-size:13px;font-weight:700;color:#374151">${consultorios}</div></div>
-      <div><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Población / consultorio</div><div style="font-size:13px;font-weight:700;color:#374151">${poblacion}</div></div>
-      <div style="grid-column:1/-1"><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Consulta general</div><div style="font-size:13px;font-weight:700;color:#374151">${consultas}</div></div>
+    : `<div style="display:grid;grid-template-columns:1fr;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid #e5e7eb">
+      <div style="grid-column:1/-1"><div style="font-size:9px;color:#9ca3af;text-transform:uppercase">Consultorios faltantes</div><div style="font-size:13px;font-weight:700;color:#374151">${faltantes}</div></div>
     </div>`;
   return `<div style="font-family:system-ui;padding:4px 0;min-width:200px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
@@ -453,9 +443,22 @@ function buildCluesFeatureCollection(unidades: CluesGeoItem[]) {
         entidad: unit.entidad,
         municipio: unit.municipio,
         localidad: unit.localidad,
-        totalConsultorios: unit.total_consultorios,
-        poblacionPorConsultorio: unit.poblacion_por_consultorio,
-        consultaGeneral: unit.consulta_general,
+        consultoriosFaltantes: unit.consultorios_faltantes,
+      },
+    })),
+  };
+}
+
+function buildAgebFeatureCollection(unidades: CluesGeoItem[]) {
+  return {
+    type: 'FeatureCollection' as const,
+    features: unidades.map((unit) => ({
+      type: 'Feature' as const,
+      geometry: unit.geometry,
+      properties: {
+        clues: unit.clues,
+        nombre: unit.nombre_de_la_unidad,
+        categoria: getMapCategory(unit),
       },
     })),
   };
@@ -465,41 +468,12 @@ function matchesInstitutionFilter(unit: CluesGeoItem, filter: InstitutionFilter)
   return unit.clave_de_la_institucion === filter;
 }
 
-interface RouteSummary {
-  distanceKm: number;
-}
-
-interface OsrmRouteResponse {
-  code: string;
-  routes?: Array<{
-    distance: number;
-    duration: number;
-    geometry: {
-      type: 'LineString';
-      coordinates: [number, number][];
-    };
-  }>;
-}
-
 type VoronoiFeatureCollection = FeatureCollection<Polygon | MultiPolygon, Record<string, unknown>>;
 
 const EMPTY_VORONOI: VoronoiFeatureCollection = {
   type: 'FeatureCollection',
   features: [],
 };
-
-function removeRouteFromMap(map: maplibregl.Map) {
-  try {
-    for (const layerId of ['route-points-halo', 'route-line', 'route-line-outline']) {
-      if (map.getLayer(layerId)) map.removeLayer(layerId);
-    }
-    for (const sourceId of ['route-points', 'route']) {
-      if (map.getSource(sourceId)) map.removeSource(sourceId);
-    }
-  } catch {
-    // La instancia puede haberse desmontado antes que este efecto.
-  }
-}
 
 function MapSection({ cluesGeo = [] }: {
   cluesGeo?: CluesGeoItem[];
@@ -509,16 +483,9 @@ function MapSection({ cluesGeo = [] }: {
   const voronoiIndexRef = useRef<Record<string, string> | null>(null);
   const voronoiFragmentsRef = useRef(new Map<string, VoronoiFeatureCollection>());
   const institucion: InstitutionFilter = 'CSA';
-  const [csaCategories, setCsaCategories] = useState({
-    Aceptada: true,
-    'No aceptada': true,
-  });
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<CluesGeoItem | null>(null);
-  const [routePoints, setRoutePoints] = useState<CluesGeoItem[]>([]);
-  const [routeSummary, setRouteSummary] = useState<RouteSummary | null>(null);
-  const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const unidades = useMemo(
     () => cluesGeo.filter((unit) => matchesInstitutionFilter(unit, institucion)),
     [cluesGeo, institucion],
@@ -537,10 +504,6 @@ function MapSection({ cluesGeo = [] }: {
       )
       .slice(0, 8);
   }, [cluesGeo, institucion, query]);
-  const activeVoronoiUnits = useMemo(
-    () => routePoints.length > 0 ? routePoints : selectedUnit ? [selectedUnit] : [],
-    [routePoints, selectedUnit],
-  );
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -559,6 +522,19 @@ function MapSection({ cluesGeo = [] }: {
       const data = unidades;
       const addLayers = () => {
         if (map.getSource('clues')) return;
+        map.addSource('ageb-polygons', {
+          type: 'geojson',
+          data: buildAgebFeatureCollection(data),
+        });
+        map.addLayer({ id: 'ageb-polygons-fill', type: 'fill', source: 'ageb-polygons', paint: {
+          'fill-color': '#2F8F83',
+          'fill-opacity': 0.16,
+        }});
+        map.addLayer({ id: 'ageb-polygons-outline', type: 'line', source: 'ageb-polygons', paint: {
+          'line-color': '#1A6B5E',
+          'line-width': 1,
+          'line-opacity': 0.65,
+        }});
         map.addSource('selected-voronoi', {
           type: 'geojson',
           data: EMPTY_VORONOI,
@@ -601,7 +577,7 @@ function MapSection({ cluesGeo = [] }: {
               null,
               String(properties['nombre']),
               String(properties['entidad']), String(properties['municipio']), String(properties['localidad']),
-              null, null, null,
+              Number(properties['consultoriosFaltantes']) || null,
             ))
             .addTo(map);
         });
@@ -614,12 +590,16 @@ function MapSection({ cluesGeo = [] }: {
           const unit = data.find((item) => item.clues === cveLoc);
           if (!unit) return;
 
-          setSelectedUnit(null);
-          setRouteSummary(null);
-          setRoutePoints((current) => current.length === 1 && current[0].clues !== unit.clues
-            ? [current[0], unit]
-            : [unit]);
+          setSelectedUnit(unit);
         });
+        map.on('click', 'ageb-polygons-fill', (event) => {
+          const cveLoc = String(event.features?.[0]?.properties?.['clues'] ?? '');
+          const unit = data.find((item) => item.clues === cveLoc);
+          if (!unit) return;
+          setSelectedUnit(unit);
+        });
+        map.on('mouseenter', 'ageb-polygons-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'ageb-polygons-fill', () => { map.getCanvas().style.cursor = ''; });
       };
 
       if (map.isStyleLoaded()) addLayers();
@@ -647,12 +627,9 @@ function MapSection({ cluesGeo = [] }: {
     const source = mapRef.current?.getSource('clues') as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
     source.setData(buildCluesFeatureCollection(unidades));
+    const polygonSource = mapRef.current?.getSource('ageb-polygons') as maplibregl.GeoJSONSource | undefined;
+    polygonSource?.setData(buildAgebFeatureCollection(unidades));
   }, [unidades]);
-
-  useEffect(() => {
-    const source = mapRef.current?.getSource('selected-voronoi') as maplibregl.GeoJSONSource | undefined;
-    source?.setData(EMPTY_VORONOI);
-  }, [activeVoronoiUnits]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -672,9 +649,7 @@ function MapSection({ cluesGeo = [] }: {
           selectedUnit.entidad,
           selectedUnit.municipio,
           selectedUnit.localidad,
-          selectedUnit.total_consultorios,
-          selectedUnit.poblacion_por_consultorio,
-          selectedUnit.consulta_general,
+          selectedUnit.consultorios_faltantes,
         ))
         .addTo(map);
     };
@@ -688,117 +663,12 @@ function MapSection({ cluesGeo = [] }: {
     };
   }, [institucion, selectedUnit]);
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const abortController = new AbortController();
-    let disposed = false;
-
-    const updateRoute = async () => {
-      removeRouteFromMap(map);
-
-      if (routePoints.length === 0) {
-        setRouteStatus('idle');
-        return;
-      }
-
-      map.addSource('route-points', {
-        type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: routePoints.map((unit, index) => ({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [unit.lng, unit.lat] },
-            properties: { order: index + 1 },
-          })),
-        },
-      });
-      map.addLayer({ id: 'route-points-halo', type: 'circle', source: 'route-points', paint: {
-        'circle-radius': 11,
-        'circle-color': '#F4B942',
-        'circle-stroke-width': 3,
-        'circle-stroke-color': '#ffffff',
-      }});
-
-      if (routePoints.length !== 2) {
-        setRouteStatus('idle');
-        return;
-      }
-
-      const [origin, destination] = routePoints;
-      setRouteStatus('loading');
-      const coordinates = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
-
-      try {
-        const response = await fetch(
-          `https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=full&geometries=geojson`,
-          { signal: abortController.signal },
-        );
-        if (!response.ok) throw new Error('No fue posible consultar la ruta');
-        const result = await response.json() as OsrmRouteResponse;
-        const route = result.routes?.[0];
-        if (result.code !== 'Ok' || !route) throw new Error('No se encontró una ruta');
-        if (disposed) return;
-
-        map.addSource('route', {
-          type: 'geojson',
-          data: { type: 'Feature', properties: {}, geometry: route.geometry },
-        });
-        map.addLayer({ id: 'route-line-outline', type: 'line', source: 'route', paint: {
-          'line-color': '#ffffff',
-          'line-width': 8,
-          'line-opacity': 0.9,
-        }}, 'clues-halo');
-        map.addLayer({ id: 'route-line', type: 'line', source: 'route', paint: {
-          'line-color': '#E08A00',
-          'line-width': 5,
-          'line-opacity': 0.95,
-        }}, 'clues-halo');
-
-        const bounds = route.geometry.coordinates.reduce(
-          (currentBounds, coordinate) => currentBounds.extend(coordinate),
-          new maplibregl.LngLatBounds(route.geometry.coordinates[0], route.geometry.coordinates[0]),
-        );
-        map.fitBounds(bounds, { padding: 80, maxZoom: 13, duration: 900 });
-        setRouteSummary({
-          distanceKm: route.distance / 1000,
-        });
-        setRouteStatus('idle');
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        setRouteStatus('error');
-      }
-    };
-
-    if (map.isStyleLoaded()) void updateRoute();
-    else map.once('load', updateRoute);
-
-    return () => {
-      disposed = true;
-      abortController.abort();
-      map.off('load', updateRoute);
-      if (mapRef.current === map) removeRouteFromMap(map);
-    };
-  }, [routePoints]);
-
   const total = unidades.length;
   const totalInstituciones = new Set(unidades.map((unit) => unit.clave_de_la_institucion)).size;
-
-  const toggleCsaCategory = (category: keyof typeof csaCategories) => {
-    setCsaCategories((current) => {
-      if (current[category] && Object.values(current).filter(Boolean).length === 1) return current;
-      return { ...current, [category]: !current[category] };
-    });
-    setSelectedUnit(null);
-    setRoutePoints([]);
-    setRouteSummary(null);
-  };
 
   const handleSelectUnit = (unit: CluesGeoItem) => {
     setQuery(`${unit.clues} - ${unit.nombre_de_la_unidad}`);
     setSearchOpen(false);
-    setRoutePoints([]);
-    setRouteSummary(null);
     setSelectedUnit(unit);
 
     const map = mapRef.current;
@@ -883,68 +753,10 @@ function MapSection({ cluesGeo = [] }: {
         {/* Mapa */}
         <div className="relative flex-1 overflow-hidden">
           <div ref={mapContainerRef} className="absolute inset-0" />
-          {routePoints.length > 0 && (
-            <div className="absolute left-3 top-3 z-10 w-[min(22rem,calc(100%-1.5rem))] rounded-lg border border-gray-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-sm font-bold text-gray-800">
-                  <Route className="h-4 w-4 text-amber-600" />
-                  Ruta entre CLUES
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (mapRef.current) removeRouteFromMap(mapRef.current);
-                    setRoutePoints([]);
-                    setRouteSummary(null);
-                    setRouteStatus('idle');
-                  }}
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                  aria-label="Limpiar ruta"
-                  title="Limpiar ruta"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="space-y-1.5 text-xs">
-                <p className="truncate text-gray-700"><span className="font-bold text-amber-700">Origen:</span> {routePoints[0].nombre_de_la_unidad}</p>
-                <p className="truncate text-gray-700"><span className="font-bold text-amber-700">Destino:</span> {routePoints[1]?.nombre_de_la_unidad ?? 'Pendiente'}</p>
-              </div>
-              {routeStatus === 'loading' && <p className="mt-2 text-xs font-semibold text-gray-500">Calculando ruta...</p>}
-              {routeStatus === 'error' && <p className="mt-2 text-xs font-semibold text-red-600">No fue posible calcular la ruta vial.</p>}
-              {routeSummary && (
-                <p className="mt-2 text-xs font-bold text-gray-700">
-                  {routeSummary.distanceKm.toLocaleString('es-MX', { maximumFractionDigits: 1 })} km
-                </p>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Footer */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-gray-100 bg-gray-50 px-4 py-2.5 text-xs text-gray-500 sm:px-6">
-          <span className="font-semibold text-gray-600">AGEB:</span>
-          {(
-            <button
-              type="button"
-              onClick={() => toggleCsaCategory('Aceptada')}
-              aria-pressed={csaCategories.Aceptada}
-              className={`flex items-center gap-1.5 font-semibold transition-opacity ${csaCategories.Aceptada ? 'text-gray-700' : 'text-gray-400 opacity-50'}`}
-            >
-              <span className={`h-3 w-3 rounded-full border-2 border-[#A57F2C] ${csaCategories.Aceptada ? 'bg-[#A57F2C]' : 'bg-white'}`} />
-              Aceptada
-            </button>
-          )}
-          {(
-            <button
-              type="button"
-              onClick={() => toggleCsaCategory('No aceptada')}
-              aria-pressed={csaCategories['No aceptada']}
-              className={`flex items-center gap-1.5 font-semibold transition-opacity ${csaCategories['No aceptada'] ? 'text-gray-700' : 'text-gray-400 opacity-50'}`}
-            >
-              <span className={`h-3 w-3 rounded-full border-2 border-gray-500 ${csaCategories['No aceptada'] ? 'bg-gray-500' : 'bg-white'}`} />
-              No aceptada
-            </button>
-          )}
           <span className="ml-auto text-gray-400">Pasa el cursor sobre un punto para ver detalles</span>
         </div>
       </section>
