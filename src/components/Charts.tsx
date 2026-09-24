@@ -697,7 +697,9 @@ function MapSection({ cluesGeo = [] }: {
   const handleSelectUnit = (unit: CluesGeoItem) => {
     setQuery(`${unit.clues} - ${unit.nombre_de_la_unidad}`);
     setSearchOpen(false);
-    setSelectedUnit(unit);
+    setSelectedUnit(null);
+
+    window.setTimeout(() => setSelectedUnit(unit), 0);
 
     const map = mapRef.current;
     if (map) {
