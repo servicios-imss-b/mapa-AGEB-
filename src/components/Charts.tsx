@@ -46,8 +46,7 @@ function formatTooltipNumber(value: unknown): string {
 }
 
 type StatKey =
-  | 'total'
-  | 'AGEB';
+  | 'total';
 
 interface StatCardDef {
   icon: typeof Layers3;
@@ -63,23 +62,13 @@ interface StatCardDef {
 const STAT_CARDS: StatCardDef[] = [
   {
     icon: Layers3,
-    label: 'TOTAL CLUES',
+    label: 'TOTAL AGEB',
     key: 'total',
     bg: 'bg-emerald-50',
     iconBg: 'bg-emerald-100',
     iconColor: 'text-emerald-600',
     valueColor: 'text-emerald-700',
     border: 'border-emerald-200',
-  },
-  {
-    icon: Building2,
-    label: 'AGEB',
-    key: 'AGEB',
-    bg: 'bg-[#FBF7ED]',
-    iconBg: 'bg-[#EFE4C8]',
-    iconColor: 'text-[#A57F2C]',
-    valueColor: 'text-[#A57F2C]',
-    border: 'border-[#E2D2AA]',
   },
 ];
 
@@ -966,11 +955,7 @@ export function StatCards({
   cluesGeo = [],
 }: ChartsProps) {
   const values: Record<StatKey, { value: number; helper: string }> = {
-    total: { value: cluesGeo.length, helper: 'Unidades de primer nivel' },
-    AGEB: {
-      value: cluesGeo.filter((unit) => unit.clave_de_la_institucion === 'CSA').length,
-      helper: `${cluesGeo.filter((unit) => unit.aceptado === 'Aceptada').length.toLocaleString('es-MX')} aceptadas · ${cluesGeo.filter((unit) => unit.aceptado === 'No aceptada').length.toLocaleString('es-MX')} no aceptadas`,
-    },
+    total: { value: cluesGeo.length, helper: 'Registros geográficos' },
   };
 
   return (
